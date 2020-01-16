@@ -1,0 +1,6 @@
+1-OK. implemenetar takeoff generator mode
+2. implementar wrapper para estimador que não retorna json (numpy por exemplo) (provavelmente chamado dentro do metodo trnasform)
+3-NÃO NECESSÁRIO. implementar modo grafo no módulo ModelPipeline
+4.implementar o modo sequencial no módulo pipeline
+5.implementar Input (herdar de Node) 
+6.implement clear_session()
