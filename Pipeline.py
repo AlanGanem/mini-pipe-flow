@@ -44,20 +44,23 @@ class Custom():
             if not isinstance(node, Capsula):
                 raise TypeError('{} should be an instance of Capsula'.format(node.name))
         
-        
+        for node in output_nodes:
+            if node.fit_only:
+                raise ValueError('output nodes should be transformable. {} is a fit_only Node'.format(node.name))
         self.clear_zones = clear_zones
         graph = self.build_graph(input_nodes,output_nodes)
         
         self.check_graph(graph,input_nodes, output_nodes)
         self.graph = graph        
-        self.nodes = [node for node in self.graph]
-        self.fit_graph = self.graph.subgraph([node for node in self.nodes if not node.transform_only])
-        self.transform_graph = self.graph.subgraph([node for node in self.nodes if not node.fit_only])
+        self.nodes = {node.name:node for node in self.graph}
+        self.fit_graph = self.graph.subgraph([node for node in self.graph if not node.transform_only])
+        self.transform_graph = self.graph.subgraph([node for node in self.graph if not node.fit_only])
         
         self.index_name_map = {node.name:index for index,node in enumerate(graph)}
         self.input_nodes = input_nodes
         self.output_nodes = output_nodes
         self.creation_date = datetime.datetime.now()
+        self.debugger = {}
         
 
         
@@ -86,8 +89,12 @@ class Custom():
         for node in self.input_nodes:
             node.store(inputs[node.name])
 
-    def fit(self, inputs = {}, clear_zones = True):
+    def fit(self, inputs = {}, debug_nodes = []):
         assert isinstance(inputs, dict)
+        if debug_nodes:
+            bad_names = [name for name in debug_nodes if name not in self.nodes.keys()]
+            if bad_names:
+                raise NameError('No node in self.graph is named {}'.format(bad_names))
         # check input nodes insatiated and values passed
         input_node_set = set([node.name for node in self.input_nodes if not node.transform_only])
         inputs_set = set(inputs.keys())
@@ -102,19 +109,28 @@ class Custom():
             self.populate_input_nodes(inputs)
             
         #recursively fit each output_node
-        for node in self.output_nodes:
+        for node in self.fit_graph:
             self.recursive_fit([node], pipe_call = 'fit')
 
-        if clear_zones == True:
-            self.clear_landing_zones()
-            self.clear_takeoff_zones()
+        self.debugger = {}
+        for node_name in debug_nodes:
+            self.debugger[node_name] = {}
+            self.debugger[node_name]['inputs'] = self[node_name].landing_zone
+            self.debugger[node_name]['outputs'] = self[node_name].takeoff_zone
+
+        self.clear_landing_zones()
+        self.clear_takeoff_zones()
             
         self.is_fitted = True
         self.last_fit_date = datetime.datetime.now()
         return self     
 
-    def transform(self, inputs = {}, clear_zones = True):
+    def transform(self, inputs = {} , debug_nodes = []):
         assert isinstance(inputs, dict)
+        if debug_nodes:
+            bad_names = [name for name in debug_nodes if name not in self.nodes.keys()]
+            if bad_names:
+                raise NameError('No node in self.graph is named {}'.format(bad_names))
         # check input nodes insatiated and values passed
         input_node_set = set([node.name for node in self.input_nodes if not node.fit_only])
         inputs_set = set(inputs.keys())
@@ -128,14 +144,19 @@ class Custom():
             self.populate_input_nodes(inputs)
 
         # recursively transform each output_node
-        outputs = []
+        outputs = {}
         for node in self.output_nodes:
             self.recursive_transform([node], pipe_call = 'transform')
-            outputs.append(node.takeoff_zone)
-            
-        if clear_zones == True:
-            self.clear_landing_zones()
-            self.clear_takeoff_zones()
+            outputs[node.name] = node.takeoff_zone
+
+        self.debugger = {}
+        for node_name in debug_nodes:
+            self.debugger[node_name] = {}
+            self.debugger[node_name]['inputs'] = self[node_name].landing_zone
+            self.debugger[node_name]['outputs'] = self[node_name].takeoff_zone
+
+        self.clear_landing_zones()
+        self.clear_takeoff_zones()
 
         self.is_transformed = True
         self.last_transform_date = datetime.datetime.now()
@@ -219,15 +240,17 @@ class Custom():
     def recursive_fit(self, nodes, pipe_call = None):
         if pipe_call == 'transform':
             nodes = [node for node in nodes if not node.fit_only]
+            graph = self.transform_graph
         elif pipe_call == 'fit':
             nodes = [node for node in nodes if not node.transform_only]
+            graph = self.fit_graph
         else:
             raise ValueError('pipe_call must be one of ["transform","fit"]')
-        
+
         for node in nodes:
             required_inputs = node.required_inputs['fit']
-            node_predecessors = [node for node in self.graph.predecessors(node) if not node.transform_only]
-            node_successors = [node for node in self.graph.successors(node) if not node.transform_only]
+            node_predecessors = [node for node in graph.predecessors(node)]
+            node_successors = [node for node in graph.successors(node)]
 
             if not node.is_fitted:
                 if node.landingzone_ready(required_inputs):
@@ -239,15 +262,22 @@ class Custom():
                             node.take(variables = 'all', sender = pre_node)
                         if not pre_node.is_transformed:
                             if pre_node.is_fitted:
-                                self.recursive_transform([pre_node], pipe_call = pipe_call)
+                                try:
+                                    self.recursive_transform([pre_node], pipe_call=pipe_call)
+                                except AssertionError:
+                                    self.recursive_fit([pre_node], pipe_call=pipe_call)
                                 node.take(variables = 'all', sender = pre_node)
                             if not pre_node.is_fitted:
                                 self.recursive_fit([pre_node], pipe_call = pipe_call)
-                                self.recursive_transform([pre_node], pipe_call = pipe_call)
+                                try:
+                                    self.recursive_transform([pre_node], pipe_call = pipe_call)
+                                except AssertionError:
+                                    self.recursive_fit([pre_node], pipe_call=pipe_call)
                                 node.take(variables = 'all', sender = pre_node)
                     if node.landingzone_ready(required_inputs):
                         print('inputs, apply recursive fit in {}'.format(node.name))
-                        self.recursive_fit([node], pipe_call = pipe_call)
+                        if not node.is_fitted:
+                            self.recursive_fit([node], pipe_call = pipe_call)
                     else:
                         inputs_in_lz = set(node.landing_zone)
                         missing_inputs = set(node.required_inputs['fit']) - inputs_in_lz
@@ -257,16 +287,18 @@ class Custom():
     def recursive_transform(self, nodes, pipe_call = None):
         if pipe_call == 'transform':
             nodes = [node for node in nodes if not node.fit_only]
+            graph = self.transform_graph
         elif pipe_call == 'fit':
             nodes = [node for node in nodes if not node.transform_only]
+            graph = self.fit_graph
         else:
             raise ValueError('pipe_call must be one of ["transform","fit"]')
-        
+
         for node in nodes:
             required_inputs = node.required_inputs['transform']
-            node_predecessors = [node for node in self.graph.predecessors(node) if not node.fit_only]
-            node_successors = [node for node in self.graph.successors(node) if not node.fit_only]
-            print('recursive_transformed called by {}'.format(node.name))
+            node_predecessors = [node for node in graph.predecessors(node)]
+            node_successors = [node for node in graph.successors(node)]
+            print('recursive_transform called by {}'.format(node.name))
             if node.is_fitted:
                 if not node.is_transformed:
                     if node.landingzone_ready(required_inputs):
@@ -282,15 +314,19 @@ class Custom():
                         else:
                             self.recursive_transform(node_predecessors, pipe_call = pipe_call)
                             for pre_node in node_predecessors:
-                                node.take('all', pre_node)
-                            node.transform()
+                                if not pre_node.is_transformed:
+                                    self.recursive_transform([pre_node], pipe_call=pipe_call)
+                                    node.take('all', pre_node)
+                                else:
+                                    node.take('all', pre_node)
+                            if not node.is_transformed:
+                                node.transform()
                             self.recursive_transform(node_successors, pipe_call = pipe_call)
                 else:
                     return
-
             else:
-                return
-                #raise AssertionError('{} is not fitted'.format(node.name))
+
+                raise AssertionError('{} is not fitted'.format(node.name))
 
 
 

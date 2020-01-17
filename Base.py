@@ -6,105 +6,6 @@ import re
 
 ### Capsula not checking properly optional and required arguments of methods and functions
 
-class BaseEstimator(ABC):
-
-    @classmethod
-    def load(cls, loading_path, **pickleargs):
-        with open(loading_path, 'rb') as file:
-            loaded_pipe = pickle.load(file, **pickleargs)
-        return loaded_pipe
-
-    def save(self, saving_path, **pickleargs):
-        with open(saving_path, 'wb') as file:
-            pickle.dump(self, file, **pickleargs)
-            
-                
-    def __init__(
-        self,
-        inputs = None,
-        outputs = None,
-        name = None,
-        input_check_mode = 'filter',
-        output_check_mode = 'filter',
-        fitargs = {},
-        transformargs = {},
-        **estimator_args
-        ):
-        
-        if inputs:
-            assert isinstance(inputs, list)
-        if outputs:
-            assert isinstance(outputs, list)
-        
-        
-        if name:
-            self.__name__ = name
-        
-        self.inputs = inputs
-        self.outputs = outputs
-        self.input_check_mode = input_check_mode
-        self.output_check_mode = output_check_mode
-        self.estimator_args = estimator_args
-
-        return
-
-    def check_input(self, inputs):
-        
-        assert isinstance(inputs, dict)        
-        
-        if not isinstance(self.inputs, list):
-            print('must assign the allowed inputs in constructor (list). not checking performed.')
-            return        
-
-        if self.input_check_mode == 'filter':
-            inputs = {input_name:value in input_name in self.inputs for input_name,value in inputs.items()}
-            return inputs
-        
-        elif self.input_check_mode == 'raise':
-            if not set(self.inputs) == set(inputs):
-                print('input json must contain exactly {} keys'.format(self.inputs))
-                raise AssertionError
-        
-        elif self.input_check_mode == 'ignore':
-            return
-
-        else:
-            print('input_check_mode should be one of ["filter","raise","ignore"]')
-            raise ValueError
-
-    def check_output(self, outputs):
-        
-        assert isinstance(outputs, dict)        
-        
-        if not isinstance(self.outputs, list):
-            print('must assign the allowed outputs in constructor (list). not checking performed.')
-            return
-
-        if self.output_check_mode == 'filter':
-            outputs = {output_name:value in output_name in self.outputs for output_name,value in outputs.items()}
-            return outputs        
-        
-        elif self.output_check_mode == 'raise':
-            if not set(self.outputs) == set(outputs):
-                print('input json must contain exactly {} keys'.format(self.outputs))
-                raise AssertionError
-        
-        elif self.output_check_mode == 'ignore':
-            return
-
-        else:
-            print('output_check_mode should be one of ["filter","raise","ignore"]')
-            raise ValueError
-
-    @abstractmethod
-    def fit(self,**inputs):
-        pass
-
-    @abstractmethod
-    def transform(self,**inputs):
-        pass
-
-
 class Capsula():
     
     def __init__(
@@ -115,19 +16,9 @@ class Capsula():
         fit_only = False,
         transform_method = 'transform',
         transform_only = False,
-        estimator_fitargs = {},
-        estimator_transformargs = {},
-        required_inputs = {},
-        optional_inputs = {},
-        allowed_outputs = {},
-        input_nodes = set({}),
-        output_nodes = set({}),
-        departures = [],
-        landing_zone = {},
-        takeoff_zone = {},
-        is_fitted = False,
-        is_transformed = False,
-        is_callable = False,
+        required_inputs = [],
+        optional_inputs = [],
+        allowed_outputs = [],
         filter_inputs = True,
         none_estim_outputs_fit = None,
         none_estim_outputs_transform = None
@@ -141,19 +32,22 @@ class Capsula():
         
         if fit_only and transform_only:
             raise AssertionError('fit_only and transform_only cannot be assigned simutaneously')
+        
+        is_callable = False
+        if callable(estimator):
+            is_callable = True
 
-        if not is_callable:
-            if callable(estimator):
-                is_callable = True
         if is_callable:
             transform_method = '__call__'
             fit_method = '__call__'
 
-        if not name:
+        if not isinstance(name,str):
             try:
                 name = estimator.__name__
             except:
                 name = estimator.__class__.__name__
+        if name == 'NoneType':
+            name = 'Unnamed'
 
 
         if estimator != None:
@@ -167,7 +61,8 @@ class Capsula():
 
                 required_inputs = inputs['required_inputs']
                 optional_inputs = inputs['optional_inputs']
-
+        
+        
         if not allowed_outputs:
             allowed_outputs = get_output_json_keys(
                 estimator = estimator,
@@ -182,21 +77,49 @@ class Capsula():
         output_name['fit'] = allowed_outputs['fit']
         output_name['transform'] = allowed_outputs['transform']
 
-        output_nodes = set(output_nodes)
-        input_nodes = set(input_nodes)
-
         ##### define everythong before this line
-        local_vars = locals()
-        for var_name in local_vars:            
-            setattr(self, var_name,local_vars[var_name])
+        self.estimator = estimator
+        self.name = name
+        self.fit_method = fit_method
+        self.transform_method = transform_method
+        self.fit_only = fit_only
+        self.transform_only = transform_only
+        self.required_inputs = required_inputs
+        self.optional_inputs = optional_inputs
+        self.allowed_outputs = allowed_outputs
+        self.filter_inputs = filter_inputs
+        self.output_name = output_name
 
         # set states unsetable by __init__ args
+        self.input_nodes = set()
+        self.output_nodes = set()
+        if not is_callable:
+            self.is_fitted = False
+            self.is_transformed = False
+        else:
+            self.is_fitted = True
+            self.is_transformed = False            
+        self.is_callable = is_callable
         self.required_inputs_landed = False
+        self.estimator_fitargs = {}
+        self.estimator_transformargs = {}
+        self.departures = []
+        self.landing_zone = {}
+        self.takeoff_zone = {}
+        self.none_estim_outputs_fit = none_estim_outputs_fit
+        self.none_estim_outputs_transform = none_estim_outputs_transform
+        
+
         return
 
     def __str__(self):
         return self.name
     
+    def set_fitargs(self, **kwargs):
+        self.estimator_fitargs = {**self.estimator_fitargs, **kwargs}
+
+    def set_transformargs(self, **kwargs):
+        self.estimator_transformargs = {**self.estimator_transformargs, **kwargs}
     #def __repr__(self):
     #    return self.name
     
@@ -280,6 +203,7 @@ class Capsula():
                       }
 
         print('fitting {}'.format(self.name))
+        #if theres a colision , fitargs will be used instead of inputs
         getattr(
             self.estimator,
             self.fit_method
@@ -304,7 +228,8 @@ class Capsula():
             inputs = {key:value for key,value in inputs.items()
                       if key in self.required_inputs['transform']+
                       self.optional_inputs['transform']}
-        print(inputs)
+
+        # if theres a colision , fitargs will be used instead of inputs
         output = getattr(
             self.estimator,
             self.transform_method

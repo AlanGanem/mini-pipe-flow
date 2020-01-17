@@ -4,3 +4,6 @@
 4.implementar o modo sequencial no módulo pipeline
 5.implementar Input (herdar de Node) 
 6.implement clear_session()
+7.pipe fit and transform using fit_graph and transform_graph
+8.include debug_nodes param in pipe fit and transform
+9. implement set_fitargs and set_trnasformargs in Nodes

@@ -22,9 +22,7 @@ class Inputer(Capsula):
 		inputs = set(inputs)
 
 		super().__init__(
-			None,
-			is_fitted = True,
-			is_callable = False,
+			estimator = None,
 			required_inputs = {'fit':inputs,'transform':inputs},
 			**kwargs
 			)
@@ -35,10 +33,12 @@ class Inputer(Capsula):
 	#	self.store(inputs)
 
 	def transform(self,):
+		self.is_transformed = True
 		return self.takeoff_zone
     
 	def fit(self):
 		self.transform()
+		self.is_fitted = True
 		return
 
 class Renamer(Capsula):
@@ -48,16 +48,16 @@ class Renamer(Capsula):
 	'''
 	def __init__(self,mapper, **nodeargs):
 		estimator = self.renamer
-		estimator_fitargs = {'mapper': mapper}
 		super().__init__(
-			estimator=estimator,
-			estimator_fitargs = estimator_fitargs,
-			estimator_transformargs = estimator_fitargs,
+			estimator=estimator,			
             required_inputs = {'fit':list(mapper.keys()),'transform':list(mapper.keys())},
 			optional_inputs= {'fit': list(mapper.keys()), 'transform': list(mapper.keys())},
 			filter_inputs = False,
 			**nodeargs
 		)
+        
+		self.set_fitargs(mapper = mapper)
+		self.set_transformargs(mapper = mapper)
 		self.mapper = mapper
 
 	def take(self, variables, sender):
