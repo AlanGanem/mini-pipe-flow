@@ -11,7 +11,7 @@ class Capsula():
     def __init__(
         self,
         estimator,
-        name = None,
+        name,
         fit_method = 'fit',
         fit_only = False,
         transform_method = 'transform',
@@ -118,20 +118,41 @@ class Capsula():
     def set_fitargs(self, **kwargs):
         self.estimator_fitargs = {**self.estimator_fitargs, **kwargs}
 
+    def reset_fitargs(self):
+        self.estimator_fitargs = {}
+
     def set_transformargs(self, **kwargs):
         self.estimator_transformargs = {**self.estimator_transformargs, **kwargs}
-    #def __repr__(self):
-    #    return self.name
+
+    def reset_transformargs(self, **kwargs):
+        self.estimator_transformargs = {}
+
     
     def __call__(self, input_nodes):
-        if not (isinstance(input_nodes,list) or isinstance(input_nodes,Capsula)):
-            raise TypeError('input must be instance of Capsula or list o Capsulas')
-
-        if isinstance(input_nodes,set):
-            self.input_nodes = inputs
-        else:
-            self.input_nodes = set(input_nodes)
+        self.add_input_nodes(input_nodes)
         return self
+
+    def add_input_nodes(self, input_nodes):
+        if not any(isinstance(input_nodes,check_class) for check_class in [list,set,tuple]):
+            input_nodes = [input_nodes]
+        for node in input_nodes:
+            if isinstance(node, Capsula):
+                self.input_nodes.add(node)
+            else:
+                raise TypeError('all input nodes must be and instance of {}. {} is {}'.format(Capsula, node, node.__class__,__name__))
+
+    def remove_input_nodes(self, node_names):
+        if not any(isinstance(node_names,check_class) for check_class in [list,set,tuple]):
+            node_names = [node_names]
+        names_dict = {node.name:node for node in self.input_nodes}
+        for name in node_names:
+            if isinstance(name, str):
+                try:
+                    self.input_nodes.remove(names_dict[name])
+                except KeyError:
+                    raise KeyError('{} is not an input node to {}'.format(name,self.name))
+            else:
+                raise TypeError('node_names must be a string or a container of strings, not {}'.format(name))
 
     def hatch(self):
         return self.estimator
@@ -157,9 +178,9 @@ class Capsula():
         if storing_colisions:
             warnings.warn('an output colision occured in {} takeoff_zone with the following variables: {}. old values will be overwritten.'.format(self.name,storing_colisions))
         self.takeoff_zone = {**self.takeoff_zone,**values}
-        print('{} stored in {} takeoffzone'.format(set(self.takeoff_zone),self.name))
+        #print('{} stored in {} takeoffzone'.format(set(self.takeoff_zone),self.name))
 
-    def take(self, variables, sender):
+    def take(self, variables, sender, colision_mode = 'warn'):
         
         inputs = sender.send(
             variables = variables,
@@ -167,7 +188,10 @@ class Capsula():
         )
         landing_intersection = set(self.landing_zone).intersection(inputs)
         if landing_intersection:
-            warnings.warn('an input colision occured in the landing zone with the following variables: {}. old values will be overwritten.'.format(landing_intersection))
+            if colision_mode == 'warn':
+                warnings.warn('an input colision occured in the landing zone with the following variables: {}. old values will be overwritten.\nfrom {} to {}'.format(landing_intersection,sender.name,self.name))
+            elif colision_mode == 'raise':
+                raise ValueError('An colision occured in landing zone with variable {}.\nfrom {} to {}'.format(landing_intersection,sender.name,self.name))
         
         self.landing_zone = {**self.landing_zone,**inputs}
     
@@ -186,7 +210,7 @@ class Capsula():
             if set(params).issubset(set(self.landing_zone)):
                 return True
             else:
-                print('missing params in {} : '.format(self.name) + str(set(params) - set(self.landing_zone)))
+                #print('missing params in {} : '.format(self.name) + str(set(params) - set(self.landing_zone)))
                 return False
         except TypeError:
             print('{} is not a valid input type for {}. landingzone_ready will return {}'.format(params,self.name, type_error_return))
@@ -229,7 +253,7 @@ class Capsula():
                       if key in self.required_inputs['transform']+
                       self.optional_inputs['transform']}
 
-        # if theres a colision , fitargs will be used instead of inputs
+        # if theres a colision , transformargs will be used instead of inputs
         output = getattr(
             self.estimator,
             self.transform_method
@@ -244,7 +268,7 @@ class Capsula():
                 fit_method = self.fit_method,
                 transform_method = self.transform_method)['transform']
             output = self.output_wrapper(output, var_name = var_name)
-            warnings.warn(('{} output type is {} instead of {}.\noutput have been wrapped in dict with key {}'.format(self.name, type(output), 'dict', str(self.output_name['transform']))))
+            #warnings.warn(('{} output type is {} instead of {}.\noutput have been wrapped in dict with key {}'.format(self.name, type(output), 'dict', str(self.output_name['transform']))))
 
         self.store(output)
         self.is_transformed = True
@@ -292,8 +316,7 @@ def get_inputs(
         except:
             optional_inputs['fit'] = ['']
         try:
-            optional_inputs['transform'] = inspectobjs[1:]['transform'].args[
-                                           -len(inspectobjs['transform'].defaults):]
+            optional_inputs['transform'] = inspectobjs['transform'].args[1:][-len(inspectobjs['transform'].defaults):]
         except:
             optional_inputs['transform'] = ['']
     else:
@@ -335,8 +358,7 @@ def get_inputs(
             except:
                 optional_inputs['fit'] = ['']
             try:
-                optional_inputs['transform'] = inspectobjs[1:]['transform'].args[
-                                               -len(inspectobjs['transform'].defaults):]
+                optional_inputs['transform'] = inspectobjs['transform'].args[1:][-len(inspectobjs['transform'].defaults):]
             except:
                 optional_inputs['transform'] = ['']
 

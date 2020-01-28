@@ -33,7 +33,7 @@ class Custom():
         with open(saving_path, 'wb') as file:
             pickle.dump(self, file, **pickleargs)
 
-    def __init__(self,input_nodes, output_nodes , clear_zones = None):
+    def __init__(self,input_nodes, output_nodes):
         if not isinstance(input_nodes, list):
             raise TypeError('input_nodes must be list')
 
@@ -47,7 +47,7 @@ class Custom():
         for node in output_nodes:
             if node.fit_only:
                 raise ValueError('output nodes should be transformable. {} is a fit_only Node'.format(node.name))
-        self.clear_zones = clear_zones
+
         graph = self.build_graph(input_nodes,output_nodes)
         
         self.check_graph(graph,input_nodes, output_nodes)
@@ -55,12 +55,21 @@ class Custom():
         self.nodes = {node.name:node for node in self.graph}
         self.fit_graph = self.graph.subgraph([node for node in self.graph if not node.transform_only])
         self.transform_graph = self.graph.subgraph([node for node in self.graph if not node.fit_only])
-        
         self.index_name_map = {node.name:index for index,node in enumerate(graph)}
-        self.input_nodes = input_nodes
         self.output_nodes = output_nodes
         self.creation_date = datetime.datetime.now()
         self.debugger = {}
+
+        # def input_nodes dict
+        self.input_nodes = {}
+        self.input_nodes['fit'] = []
+        self.input_nodes['transform'] = []
+        for node in input_nodes:
+            if not node.fit_only:
+                self.input_nodes['transform'].append(node)
+            if not node.transform_only:
+                self.input_nodes['fit'].append(node)
+        #####
         
 
         
@@ -85,82 +94,111 @@ class Custom():
         return graph
 
 
-    def populate_input_nodes(self, inputs):
-        for node in self.input_nodes:
-            node.store(inputs[node.name])
+    def populate_input_nodes(self, inputs, pipe_call = None):
+        if not pipe_call in ['fit','transform']:
+            raise ValueError('pipe_call must be one of ["fit","transform"]')
 
-    def fit(self, inputs = {}, debug_nodes = []):
+        for node in self.input_nodes[pipe_call]:
+            node.store(inputs[node.name])
+            node.landing_zone = inputs[node.name]
+
+    def fit(self, inputs = {}, debug_nodes = [],clear_nodes_memory = True):
         assert isinstance(inputs, dict)
         if debug_nodes:
             bad_names = [name for name in debug_nodes if name not in self.nodes.keys()]
             if bad_names:
                 raise NameError('No node in self.graph is named {}'.format(bad_names))
         # check input nodes insatiated and values passed
-        input_node_set = set([node.name for node in self.input_nodes if not node.transform_only])
+        input_node_set = set([node.name for node in self.input_nodes['fit']])
         inputs_set = set(inputs.keys())
         if inputs_set != input_node_set:
-            raise KeyError(r'inputs must contain keys {}. got {} instead'.format(input_node_set, inputs_set))
+            raise KeyError(r'fit inputs must contain keys {}. got {} instead'.format(input_node_set, inputs_set))
 
         # clear graph memory
         self.clear_landing_zones()
         self.clear_takeoff_zones()
         #populate input_nodes
         if inputs:
-            self.populate_input_nodes(inputs)
+            self.populate_input_nodes(inputs, pipe_call= 'fit')
             
-        #recursively fit each output_node
-        for node in self.fit_graph:
-            self.recursive_fit([node], pipe_call = 'fit')
+        #fit nodes in topological sort
+        self.debugger = {'metadata':{
+            'pipe_call':'fit',
+            'call_instant':datetime.datetime.now()
+        }
+        }
+        for node in nx.algorithms.dag.topological_sort(self.fit_graph):
+            for in_node in node.input_nodes:
+                node.take('all', in_node)
+            node.fit()
+            node.transform()
+            if node.name in debug_nodes:
+                self.debugger[node.name] = {}
+                self.debugger[node.name]['inputs'] = node.landing_zone
+                self.debugger[node.name]['outputs'] = node.takeoff_zone
 
-        self.debugger = {}
-        for node_name in debug_nodes:
-            self.debugger[node_name] = {}
-            self.debugger[node_name]['inputs'] = self[node_name].landing_zone
-            self.debugger[node_name]['outputs'] = self[node_name].takeoff_zone
-
-        self.clear_landing_zones()
-        self.clear_takeoff_zones()
+        if not clear_nodes_memory == False:
+            self.clear_landing_zones()
+            self.clear_takeoff_zones()
             
         self.is_fitted = True
         self.last_fit_date = datetime.datetime.now()
         return self     
 
-    def transform(self, inputs = {} , debug_nodes = []):
+    def transform(self, inputs = {} , debug_nodes = [],clear_nodes_memory = True):
         assert isinstance(inputs, dict)
         if debug_nodes:
             bad_names = [name for name in debug_nodes if name not in self.nodes.keys()]
             if bad_names:
                 raise NameError('No node in self.graph is named {}'.format(bad_names))
         # check input nodes insatiated and values passed
-        input_node_set = set([node.name for node in self.input_nodes if not node.fit_only])
+        input_node_set = set([node.name for node in self.input_nodes['transform']])
         inputs_set = set(inputs.keys())
         if inputs_set != input_node_set:
-            raise KeyError('inputs keys must be {}. got {} instead'.format(input_node_set,inputs_set))
+            raise KeyError('transform inputs keys must be {}. got {} instead'.format(input_node_set,inputs_set))
 
         #clear graph memory
         self.clear_landing_zones()
         self.clear_takeoff_zones()
         if inputs:
-            self.populate_input_nodes(inputs)
+            self.populate_input_nodes(inputs, pipe_call= 'transform')
 
-        # recursively transform each output_node
-        outputs = {}
-        for node in self.output_nodes:
-            self.recursive_transform([node], pipe_call = 'transform')
-            outputs[node.name] = node.takeoff_zone
+        # fit nodes in topological sort
+        self.debugger = {'metadata': {
+            'pipe_call': 'transform',
+            'call_instant': datetime.datetime.now()
+        }
+        }
+        for node in nx.algorithms.dag.topological_sort(self.transform_graph):
+            for in_node in node.input_nodes:
+                node.take('all', in_node)
+            if not node.is_fitted:
+                raise RuntimeError('{} have not been fitted yet'.format(node.name))
+            node.transform()
+            if node.name in debug_nodes:
+                self.debugger[node.name] = {}
+                self.debugger[node.name]['inputs'] = node.landing_zone
+                self.debugger[node.name]['outputs'] = node.takeoff_zone
+        
+        outputs = {node.name:node.takeoff_zone for node in self.output_nodes}
+        
+        if not clear_nodes_memory == False:
+            self.clear_landing_zones()
+            self.clear_takeoff_zones()
 
-        self.debugger = {}
-        for node_name in debug_nodes:
-            self.debugger[node_name] = {}
-            self.debugger[node_name]['inputs'] = self[node_name].landing_zone
-            self.debugger[node_name]['outputs'] = self[node_name].takeoff_zone
-
-        self.clear_landing_zones()
-        self.clear_takeoff_zones()
 
         self.is_transformed = True
         self.last_transform_date = datetime.datetime.now()
         return outputs
+
+    def debug(self,debug_nodes):
+        for node_name in debug_nodes:
+            if node_name == 'metadata':
+                raise NameError('"metadata" is not a valid node name for debugging')
+            self.debugger[node_name] = {}
+            self.debugger[node_name]['inputs'] = self[node_name].landing_zone
+            self.debugger[node_name]['outputs'] = self[node_name].takeoff_zone
+        return
                             
     def check_graph(self,graph, input_nodes, output_nodes):
         # check if all n odes are instances of capsula
@@ -173,18 +211,19 @@ class Custom():
         if inputers_not_in_input_nodes:
             raise TypeError('{} are Inputer nodes and should be passed as input_nodes in the pipeline constuctor'.format(inputers_not_in_input_nodes))
         #create fit and transform subgraph (only for checking)
-        fit_graph = graph.subgraph([node for node in graph.nodes if not node.transform_only])
-        transform_graph = graph.subgraph([node for node in graph.nodes if not node.fit_only])
+        #fit_graph = graph.subgraph([node for node in graph.nodes if not node.transform_only])
+        #transform_graph = graph.subgraph([node for node in graph.nodes if not node.fit_only])
         #check for connectedness and input nodes as endpoints
         if not nx.algorithms.components.weakly_connected.is_weakly_connected(graph):
             self.plot_graph(graph = graph, with_labels = True)
             raise AssertionError('graph is disconnected')
-        if not nx.algorithms.components.weakly_connected.is_weakly_connected(fit_graph):
-            self.plot_graph(graph = graph, with_labels = True)
-            raise AssertionError('fit_graph is disconnected. {}'.format([node.name for node in fit_graph]))
-        if not nx.algorithms.components.weakly_connected.is_weakly_connected(transform_graph):
-            self.plot_graph(graph = graph, with_labels = True)
-            raise AssertionError('transform_graph is disconnected. {}'.format([node.name for node in transform_graph]))
+
+        # if not nx.algorithms.components.weakly_connected.is_weakly_connected(fit_graph):
+        #     self.plot_graph(graph = graph, with_labels = True)
+        #     raise AssertionError('fit_graph is disconnected. {}'.format([node.name for node in fit_graph]))
+        # if not nx.algorithms.components.weakly_connected.is_weakly_connected(transform_graph):
+        #     self.plot_graph(graph = graph, with_labels = True)
+        #     raise AssertionError('transform_graph is disconnected. {}'.format([node.name for node in transform_graph]))
 
         ###CHECK FOR DUPLICATE NAMES
         node_names = [node.name for node in graph]
@@ -222,112 +261,20 @@ class Custom():
         nx.draw(graph, **drawargs, node_color = color_map, layout = nx.drawing.layout.kamada_kawai_layout(graph))
         plt.show()
 
-    def plot_pipeline(self, file_path, subgraph = 'all' ,**plotargs):
-        if not subgraph in ['all','fit','transform']:
-            raise TypeError('subgraph must be one of {}'.format(['all','fit','transform']))
+    def plot_pipeline(self, file_path, **plotargs):
+        # if not subgraph in ['all','fit','transform']:
+        #     raise TypeError('subgraph must be one of {}'.format(['all','fit','transform']))
         
-        if subgraph == 'transform':
-            graph = self.transform_graph
-        if subgraph == 'fit':
-            graph = self.fit_graph
-        if subgraph == 'all':
-            graph = self.graph
-        
-        
+        # if subgraph == 'transform':
+        #     graph = self.transform_graph
+        # if subgraph == 'fit':
+        #     graph = self.fit_graph
+        # if subgraph == 'all':
+
+        graph = self.graph
+
         dot = model_to_dot(graph, **plotargs)
         dot.write_png(file_path)
-
-    def recursive_fit(self, nodes, pipe_call = None):
-        if pipe_call == 'transform':
-            nodes = [node for node in nodes if not node.fit_only]
-            graph = self.transform_graph
-        elif pipe_call == 'fit':
-            nodes = [node for node in nodes if not node.transform_only]
-            graph = self.fit_graph
-        else:
-            raise ValueError('pipe_call must be one of ["transform","fit"]')
-
-        for node in nodes:
-            required_inputs = node.required_inputs['fit']
-            node_predecessors = [node for node in graph.predecessors(node)]
-            node_successors = [node for node in graph.successors(node)]
-
-            if not node.is_fitted:
-                if node.landingzone_ready(required_inputs):
-                    node.fit()
-                    self.recursive_fit(node_successors, pipe_call = pipe_call)
-                if not node.landingzone_ready(required_inputs):
-                    for pre_node in node_predecessors:
-                        if pre_node.is_transformed:
-                            node.take(variables = 'all', sender = pre_node)
-                        if not pre_node.is_transformed:
-                            if pre_node.is_fitted:
-                                try:
-                                    self.recursive_transform([pre_node], pipe_call=pipe_call)
-                                except AssertionError:
-                                    self.recursive_fit([pre_node], pipe_call=pipe_call)
-                                node.take(variables = 'all', sender = pre_node)
-                            if not pre_node.is_fitted:
-                                self.recursive_fit([pre_node], pipe_call = pipe_call)
-                                try:
-                                    self.recursive_transform([pre_node], pipe_call = pipe_call)
-                                except AssertionError:
-                                    self.recursive_fit([pre_node], pipe_call=pipe_call)
-                                node.take(variables = 'all', sender = pre_node)
-                    if node.landingzone_ready(required_inputs):
-                        print('inputs, apply recursive fit in {}'.format(node.name))
-                        if not node.is_fitted:
-                            self.recursive_fit([node], pipe_call = pipe_call)
-                    else:
-                        inputs_in_lz = set(node.landing_zone)
-                        missing_inputs = set(node.required_inputs['fit']) - inputs_in_lz
-                        raise AssertionError('{} missing required_inputs {}'.format(node.name,missing_inputs))
-        return
-
-    def recursive_transform(self, nodes, pipe_call = None):
-        if pipe_call == 'transform':
-            nodes = [node for node in nodes if not node.fit_only]
-            graph = self.transform_graph
-        elif pipe_call == 'fit':
-            nodes = [node for node in nodes if not node.transform_only]
-            graph = self.fit_graph
-        else:
-            raise ValueError('pipe_call must be one of ["transform","fit"]')
-
-        for node in nodes:
-            required_inputs = node.required_inputs['transform']
-            node_predecessors = [node for node in graph.predecessors(node)]
-            node_successors = [node for node in graph.successors(node)]
-            print('recursive_transform called by {}'.format(node.name))
-            if node.is_fitted:
-                if not node.is_transformed:
-                    if node.landingzone_ready(required_inputs):
-                        if not node.is_transformed:
-                            node.transform()
-                            self.recursive_transform(node_successors, pipe_call = pipe_call)
-                    else:
-                        for pre_node in node_predecessors:
-                            node.take('all', pre_node)
-                        if node.landingzone_ready(required_inputs):
-                            node.transform()
-                            self.recursive_transform(node_successors, pipe_call = pipe_call)
-                        else:
-                            self.recursive_transform(node_predecessors, pipe_call = pipe_call)
-                            for pre_node in node_predecessors:
-                                if not pre_node.is_transformed:
-                                    self.recursive_transform([pre_node], pipe_call=pipe_call)
-                                    node.take('all', pre_node)
-                                else:
-                                    node.take('all', pre_node)
-                            if not node.is_transformed:
-                                node.transform()
-                            self.recursive_transform(node_successors, pipe_call = pipe_call)
-                else:
-                    return
-            else:
-
-                raise AssertionError('{} is not fitted'.format(node.name))
-
 
 
 class Sequential(Custom):

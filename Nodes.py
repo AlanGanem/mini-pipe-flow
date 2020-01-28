@@ -4,7 +4,7 @@ import warnings
 
 class Node(Capsula):
 	'''
-	rename the capsula class in order to avoid calling from Base
+	rename the capsula class to avoid calling from Base module
 	'''
 	pass
 
@@ -26,6 +26,7 @@ class Inputer(Capsula):
 			required_inputs = {'fit':inputs,'transform':inputs},
 			**kwargs
 			)
+		self.is_fitted = True
 
 	#def __call__(self,inputs):
 	#	if not isinstance(inputs,dict):
@@ -71,7 +72,6 @@ class Renamer(Capsula):
 			warnings.warn('an input colision occured in the landing zone with the following variables: {}'.format(
 				landing_intersection))
 
-		print({**self.landing_zone, **inputs})
 
 		self.landing_zone = {**self.landing_zone, **inputs}
 
@@ -113,7 +113,6 @@ class Getter(Capsula):
 			try:
 				attribute_value = getattr(estimator, attribute)
 				self.landing_zone = {**self.landing_zone, **{attribute:attribute_value}}
-				print(self.landing_zone)
 			except:
 				print('{} does not have the attribute {}'.format(sender, attribute))
 				pass

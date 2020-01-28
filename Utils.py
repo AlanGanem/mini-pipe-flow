@@ -6,6 +6,7 @@ Created on Fri Jan  3 18:57:23 2020
 """
 import pydot_ng as pydot
 from .Nodes import Inputer, Node, Renamer
+import pickle
 
 def model_to_dot(graph,
                  show_layer_names=True,
@@ -45,27 +46,25 @@ def model_to_dot(graph,
             type_ = node.__class__.__name__
 
         #create node_labels
-        if isinstance(node, Inputer):
-            required_input_labels = 'None'
-            optional_input_labels = 'None'
+
+        if not node.is_callable:
+            required_input_labels = node.required_inputs
+            optional_input_labels = node.optional_inputs
+            output_labels = node.allowed_outputs
         else:
-            if not node.is_callable:
-                required_input_labels = node.required_inputs
-                optional_input_labels = node.optional_inputs
-                output_labels = node.allowed_outputs
-            else:
-                required_input_labels = node.required_inputs['fit']
-                optional_input_labels = node.optional_inputs['fit']
-                output_labels = node.allowed_outputs['fit']
+            required_input_labels = node.required_inputs['fit']
+            optional_input_labels = node.optional_inputs['fit']
+            output_labels = node.allowed_outputs['fit']
 
         if isinstance(node, Inputer):
-            label = "Inputer\n%s\n%s" % (
-                name if name != 'None' else '',
-                mode
+            label = "Inputer\n%s\n%s\n%s" % (
+                name,
+                mode,
+                list(node.required_inputs['fit'])
             )
         elif isinstance(node, Renamer):
             label = "Renamer\n%s\n%s| %s" % (
-                name if name != 'None' else '',
+                name,
                 mode,
                 node.mapper
             )
@@ -86,18 +85,30 @@ def model_to_dot(graph,
 
     return dot
 
-def populate_graph(output, graph):
-    if not output in graph:
-        graph.add_node(output)
-    for node in output.input_nodes:
+#recursively populate graph backwards
+def populate_graph(node, graph):
+    if not node in graph:
+        graph.add_node(node)
+    for in_node in node.input_nodes:
         if node.input_nodes:
-            if not node in graph:
-                graph.add_node(node)
-            graph.add_edge(node,output)
-            populate_graph(node,graph)
+            if not in_node in graph:
+                graph.add_node(in_node)
+            graph.add_edge(in_node,node)
+            populate_graph(in_node,graph)
         else:
-            if not node in graph:
-                graph.add_node(node)
-            graph.add_edge(node,output)
+            if not in_node in graph:
+                graph.add_node(in_node)
+            graph.add_edge(in_node,node)
 
+
+def run_pipeline(loading_path, inputs ,mode = 'transform',**runargs):
+
+    with open(loading_path, 'rb') as file:
+        pipe = pickle.load(file)
+
+    result = getattr(pipe,mode)(
+        inputs,
+        **runargs
+    )
+    return result
 
