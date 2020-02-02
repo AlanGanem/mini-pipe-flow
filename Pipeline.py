@@ -102,12 +102,18 @@ class Custom():
             node.store(inputs[node.name])
             node.landing_zone = inputs[node.name]
 
-    def fit(self, inputs = {}, debug_nodes = [],clear_nodes_memory = True):
+    def fit(self, inputs = {}, debug_nodes = None,clear_nodes_memory = True):
         assert isinstance(inputs, dict)
-        if debug_nodes:
+        if debug_nodes.__class__ in [list,set,tuple]:
             bad_names = [name for name in debug_nodes if name not in self.nodes.keys()]
             if bad_names:
                 raise NameError('No node in self.graph is named {}'.format(bad_names))
+        elif debug_nodes == 'all':
+            debug_nodes = [node.name for node in self.fit_graph]
+        else:
+            print('debug nodes set to empty list')
+            debug_nodes = []
+        
         # check input nodes insatiated and values passed
         input_node_set = set([node.name for node in self.input_nodes['fit']])
         inputs_set = set(inputs.keys())
@@ -147,10 +153,15 @@ class Custom():
 
     def transform(self, inputs = {} , debug_nodes = [],clear_nodes_memory = True):
         assert isinstance(inputs, dict)
-        if debug_nodes:
+        if debug_nodes.__class__ in [list, set, tuple]:
             bad_names = [name for name in debug_nodes if name not in self.nodes.keys()]
             if bad_names:
                 raise NameError('No node in self.graph is named {}'.format(bad_names))
+        elif debug_nodes == 'all':
+            debug_nodes = [node.name for node in self.transform_graph]
+        else:
+            print('debug nodes set to empty list')
+            debug_nodes = []
         # check input nodes insatiated and values passed
         input_node_set = set([node.name for node in self.input_nodes['transform']])
         inputs_set = set(inputs.keys())
